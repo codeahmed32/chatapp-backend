@@ -22,7 +22,7 @@ io.on("connection", (socket) => {
     // User data ke sath join event handler
     socket.on("join", ({ roomId, userName }) => {
         socket.join(roomId);
-        
+
         // Save socket parameters globally for disconnect tracking
         socket.roomId = roomId;
         socket.userName = userName;
@@ -36,7 +36,7 @@ io.on("connection", (socket) => {
             rooms[roomId].push({
                 id: socket.id,
                 name: userName,
-                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${userName}`, // Auto-generated consistent avatar
+                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${userName}`,
                 status: "Active Now"
             });
         }
