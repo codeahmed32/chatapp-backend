@@ -3,10 +3,12 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
+
 import ConnectDb from "./Utils/ConnectDb.js";
 import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
 import Room from "./models/messages.js"; 
+
 dotenv.config();
 const app = express();
 
@@ -77,7 +79,8 @@ io.on("connection", (socket) => {
             timeStamp: new Date()
         };
 
-        socket.to(room).emit("message", dataToStore);
+        // FIX: io.to(room) use kiya hai taake sender aur receiver dono ko real-time event mile
+        io.to(room).emit("message", dataToStore);
 
         try {
             await redisClient.lPush(listKey, JSON.stringify(dataToStore));
@@ -101,9 +104,7 @@ io.on("connection", (socket) => {
 const startServer = async () => {
     try {
         await ConnectDb();
-
         await connectRedis();
-
         initCronJobs();
 
         const PORT = process.env.PORT || 5050;
