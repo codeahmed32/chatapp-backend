@@ -3,11 +3,10 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
-
 import ConnectDb from "./Utils/ConnectDb.js";
 import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
-import Room from "./model/Room.js"; 
+import Room from "./models/messages.js"; 
 dotenv.config();
 const app = express();
 
