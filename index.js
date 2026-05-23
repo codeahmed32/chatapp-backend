@@ -1,8 +1,19 @@
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
+import cors from "cors";
+import dotenv from "dotenv";
 
+import ConnectDb from "./Utils/ConnectDb.js";
+import redisClient, { connectRedis } from "./Utils/redis.js";
+import { initCronJobs } from "./Utils/cronJob.js";
+import Room from "./model/Room.js"; 
+dotenv.config();
 const app = express();
+
+app.use(cors({ origin: "*" }));
+app.use(express.json());
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -13,17 +24,13 @@ const io = new Server(server, {
     },
 });
 
-// Room wise users track karne ke liye in-memory object
 const rooms = {};
 
 io.on("connection", (socket) => {
     console.log(`User Connected: ${socket.id}`);
 
-    // User data ke sath join event handler
-    socket.on("join", ({ roomId, userName }) => {
+    socket.on("join", async ({ roomId, userName }) => {
         socket.join(roomId);
-
-        // Save socket parameters globally for disconnect tracking
         socket.roomId = roomId;
         socket.userName = userName;
 
@@ -31,7 +38,6 @@ io.on("connection", (socket) => {
             rooms[roomId] = [];
         }
 
-        // duplicate entry prevention
         if (!rooms[roomId].some(user => user.id === socket.id)) {
             rooms[roomId].push({
                 id: socket.id,
@@ -41,8 +47,16 @@ io.on("connection", (socket) => {
             });
         }
 
-        // Broadcast updated user list to everyone in the room
         io.to(roomId).emit("room_users", rooms[roomId]);
+
+        try {
+            const roomData = await Room.findOne({ roomId });
+            const history = roomData ? roomData.messages : [];
+            socket.emit("chat_history", history); 
+            console.log(`Historic logs transmitted for room: ${roomId}`);
+        } catch (err) {
+            console.error("Error fetching chat history from MongoDB:", err);
+        }
     });
 
     socket.on("leave", (roomId) => {
@@ -53,9 +67,26 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("send", (message) => {
-        // message object strict schema format: { room, sender, text, timestamp }
-        socket.to(message.room).emit("message", message);
+    socket.on("send", async (messagePayload) => {
+        const { room, senderName, message } = messagePayload;
+        const listKey = "chat_messages";
+
+        const dataToStore = {
+            roomId: room,
+            senderName: senderName,
+            message: message,
+            timeStamp: new Date()
+        };
+
+        socket.to(room).emit("message", dataToStore);
+
+        try {
+            await redisClient.lPush(listKey, JSON.stringify(dataToStore));
+            await redisClient.expire(listKey, 5400); 
+            console.log("Volatile message cache write success.");
+        } catch (err) {
+            console.error("Failed to push message to Redis:", err);
+        }
     });
 
     socket.on("disconnect", () => {
@@ -68,6 +99,22 @@ io.on("connection", (socket) => {
     });
 });
 
-server.listen(5050, () => {
-    console.log("Server running at port 5050");
-});
+const startServer = async () => {
+    try {
+        await ConnectDb();
+
+        await connectRedis();
+
+        initCronJobs();
+
+        const PORT = process.env.PORT || 5050;
+        server.listen(PORT, "0.0.0.0", () => {
+            console.log(`Chat server seamlessly running at port ${PORT}`);
+        });
+    } catch (err) {
+        console.error("Fatal startup error, connection aborted:", err);
+        process.exit(1);
+    }
+};
+
+startServer();
