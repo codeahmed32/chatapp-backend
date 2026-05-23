@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import redisClient from "./redis.js"; 
-import Room from "../model/Room.js";   
+import Room from "./model/messages.js"; 
 
 export const initCronJobs = () => {
     cron.schedule("*/5 * * * *", async () => {
