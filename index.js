@@ -12,7 +12,7 @@ import Room from "./models/messages.js";
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: "https://chat-app-front-end-react-js.vercel.app/" }));
 app.use(express.json());
 
 const server = http.createServer(app);
