@@ -28,7 +28,7 @@ const io = new Server(server, {
         methods: ["GET", "POST"],
         credentials: true,
     },
-    transports: ["websocket", "polling"] 
+    transports: ["polling", "websocket"] 
 });
 
 const rooms = {};
@@ -73,10 +73,11 @@ io.on("connection", (socket) => {
 
     socket.on("leave", (roomId) => {
         if (!roomId) return;
-        socket.leave(roomId);
-        if (rooms[roomId]) {
-            rooms[roomId] = rooms[roomId].filter(user => user.id !== socket.id);
-            io.to(roomId).emit("room_users", rooms[roomId]);
+        const cleanRoomId = String(roomId).trim();
+        socket.leave(cleanRoomId);
+        if (rooms[cleanRoomId]) {
+            rooms[cleanRoomId] = rooms[cleanRoomId].filter(user => user.id !== socket.id);
+            io.to(cleanRoomId).emit("room_users", rooms[cleanRoomId]);
         }
     });
 
@@ -87,23 +88,29 @@ io.on("connection", (socket) => {
             return; 
         }
 
-        if (message.length > 1000) {
+        // HTML Sanitization vector targeting XSS scripts injection
+        const cleanMessage = String(message)
+            .trim()
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
+        if (cleanMessage.length > 1000) {
             return socket.emit("error_message", "Message limits exceeded.");
         }
 
         const listKey = "chat_messages";
         const dataToStore = {
-            roomId: String(room),
-            senderName: String(senderName).substring(0, 50),
-            message: String(message).trim(),
-            timeStamp: new Date()
+            roomId: String(room).trim(),
+            senderName: String(senderName).substring(0, 50).trim(),
+            message: cleanMessage,
+            timeStamp: new Date().toISOString() 
         };
 
-        io.to(room).emit("message", dataToStore);
+        io.to(dataToStore.roomId).emit("message", dataToStore);
 
         try {
             await redisClient.lPush(listKey, JSON.stringify(dataToStore));
-            await redisClient.expire(listKey, 5400); 
             console.log("Volatile message cache write success.");
         } catch (err) {
             console.error("Failed to push message to Redis:", err);
