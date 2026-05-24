@@ -3,6 +3,7 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
+import mongoose from "mongoose"; 
 import ConnectDb from "./Utils/ConnectDb.js";
 import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
@@ -116,6 +117,7 @@ io.on("connection", (socket) => {
         }
     });
 
+
     socket.on("edit_message", async ({ room, messageId, newMessage }) => {
         if (!room || !messageId || !newMessage || String(newMessage).trim() === "") return;
 
@@ -124,14 +126,19 @@ io.on("connection", (socket) => {
         io.to(room).emit("message_edited", { messageId, message: cleanMessage });
 
         try {
+            const targetId = mongoose.Types.ObjectId.isValid(messageId) 
+                ? new mongoose.Types.ObjectId(messageId) 
+                : messageId;
+
             await Room.updateOne(
-                { roomId: room, "messages._id": messageId },
+                { roomId: room, "messages._id": targetId },
                 { $set: { "messages.$.message": cleanMessage, "messages.$.isEdited": true } }
             );
         } catch (err) {
-            console.error(err);
+            console.error("Failed to edit message in DB:", err);
         }
     });
+
 
     socket.on("delete_message", async ({ room, messageId }) => {
         if (!room || !messageId) return;
@@ -139,12 +146,16 @@ io.on("connection", (socket) => {
         io.to(room).emit("message_deleted", { messageId });
 
         try {
+            const targetId = mongoose.Types.ObjectId.isValid(messageId) 
+                ? new mongoose.Types.ObjectId(messageId) 
+                : messageId;
+
             await Room.updateOne(
                 { roomId: room },
-                { $pull: { messages: { _id: messageId } } }
+                { $pull: { messages: { _id: targetId } } }
             );
         } catch (err) {
-            console.error(err);
+            console.error("Failed to delete message from DB:", err);
         }
     });
 
