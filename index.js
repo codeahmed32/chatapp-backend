@@ -88,7 +88,6 @@ io.on("connection", (socket) => {
             return; 
         }
 
-        // HTML Sanitization vector targeting XSS scripts injection
         const cleanMessage = String(message)
             .trim()
             .replace(/&/g, "&amp;")
@@ -104,7 +103,7 @@ io.on("connection", (socket) => {
             roomId: String(room).trim(),
             senderName: String(senderName).substring(0, 50).trim(),
             message: cleanMessage,
-            timeStamp: new Date().toISOString() 
+            timeStamp: new Date().toISOString()
         };
 
         io.to(dataToStore.roomId).emit("message", dataToStore);
@@ -114,6 +113,38 @@ io.on("connection", (socket) => {
             console.log("Volatile message cache write success.");
         } catch (err) {
             console.error("Failed to push message to Redis:", err);
+        }
+    });
+
+    socket.on("edit_message", async ({ room, messageId, newMessage }) => {
+        if (!room || !messageId || !newMessage || String(newMessage).trim() === "") return;
+
+        const cleanMessage = String(newMessage).trim().replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        io.to(room).emit("message_edited", { messageId, message: cleanMessage });
+
+        try {
+            await Room.updateOne(
+                { roomId: room, "messages._id": messageId },
+                { $set: { "messages.$.message": cleanMessage, "messages.$.isEdited": true } }
+            );
+        } catch (err) {
+            console.error(err);
+        }
+    });
+
+    socket.on("delete_message", async ({ room, messageId }) => {
+        if (!room || !messageId) return;
+
+        io.to(room).emit("message_deleted", { messageId });
+
+        try {
+            await Room.updateOne(
+                { roomId: room },
+                { $pull: { messages: { _id: messageId } } }
+            );
+        } catch (err) {
+            console.error(err);
         }
     });
 

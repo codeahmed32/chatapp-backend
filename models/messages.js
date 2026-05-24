@@ -1,27 +1,31 @@
 import mongoose from "mongoose";
-const messageSchema = new mongoose.Schema({
-    senderName:{
-        type:String,
-        required:true
-    },
-    message:{
-        type:String,
-        required:true,
 
+const messageSchema = new mongoose.Schema({
+    senderName: {
+        type: String,
+        required: true
     },
-    timeStamp:{
-        type:Date,
-        default:Date.now,
+    message: {
+        type: String,
+        required: true,
     },
+    timeStamp: {
+        type: Date,
+        default: Date.now,
+    },
+    isEdited: {
+        type: Boolean,
+        default: false
+    }
 });
 
 const roomSchema = new mongoose.Schema({
-    roomId:{
-        type:String,
-        required:true,
+    roomId: {
+        type: String,
+        required: true,
         unique: true,
     },
-    messages:[messageSchema],
-
+    messages: [messageSchema],
 });
+
 export default mongoose.model("Room", roomSchema);
