@@ -3,7 +3,6 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
-
 import ConnectDb from "./Utils/ConnectDb.js";
 import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
@@ -12,17 +11,24 @@ import Room from "./models/messages.js";
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "https://chat-app-front-end-react-js.vercel.app" }));
+const ALLOWED_ORIGIN = "https://chat-app-front-end-react-js.vercel.app";
+
+app.use(cors({ 
+    origin: ALLOWED_ORIGIN,
+    methods: ["GET", "POST"],
+    credentials: true
+}));
 app.use(express.json());
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
     cors: {
-        origin: "https://chat-app-front-end-react-js.vercel.app",
+        origin: ALLOWED_ORIGIN,
         methods: ["GET", "POST"],
         credentials: true,
     },
+    transports: ["websocket", "polling"] 
 });
 
 const rooms = {};
@@ -31,36 +37,42 @@ io.on("connection", (socket) => {
     console.log(`User Connected: ${socket.id}`);
 
     socket.on("join", async ({ roomId, userName }) => {
-        socket.join(roomId);
-        socket.roomId = roomId;
-        socket.userName = userName;
+        if (!roomId || !userName) return;
 
-        if (!rooms[roomId]) {
-            rooms[roomId] = [];
+        const cleanRoomId = String(roomId).trim();
+        const cleanUserName = String(userName).trim().substring(0, 50);
+
+        socket.join(cleanRoomId);
+        socket.roomId = cleanRoomId;
+        socket.userName = cleanUserName;
+
+        if (!rooms[cleanRoomId]) {
+            rooms[cleanRoomId] = [];
         }
 
-        if (!rooms[roomId].some(user => user.id === socket.id)) {
-            rooms[roomId].push({
+        if (!rooms[cleanRoomId].some(user => user.id === socket.id)) {
+            rooms[cleanRoomId].push({
                 id: socket.id,
-                name: userName,
-                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${userName}`,
+                name: cleanUserName,
+                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUserName)}`,
                 status: "Active Now"
             });
         }
 
-        io.to(roomId).emit("room_users", rooms[roomId]);
+        io.to(cleanRoomId).emit("room_users", rooms[cleanRoomId]);
 
         try {
-            const roomData = await Room.findOne({ roomId });
+            const roomData = await Room.findOne({ roomId: cleanRoomId });
             const history = roomData ? roomData.messages : [];
             socket.emit("chat_history", history); 
-            console.log(`Historic logs transmitted for room: ${roomId}`);
+            console.log(`Historic logs transmitted for room: ${cleanRoomId}`);
         } catch (err) {
             console.error("Error fetching chat history from MongoDB:", err);
         }
     });
 
     socket.on("leave", (roomId) => {
+        if (!roomId) return;
         socket.leave(roomId);
         if (rooms[roomId]) {
             rooms[roomId] = rooms[roomId].filter(user => user.id !== socket.id);
@@ -70,16 +82,23 @@ io.on("connection", (socket) => {
 
     socket.on("send", async (messagePayload) => {
         const { room, senderName, message } = messagePayload;
-        const listKey = "chat_messages";
+        
+        if (!room || !senderName || !message || String(message).trim() === "") {
+            return; 
+        }
 
+        if (message.length > 1000) {
+            return socket.emit("error_message", "Message limits exceeded.");
+        }
+
+        const listKey = "chat_messages";
         const dataToStore = {
-            roomId: room,
-            senderName: senderName,
-            message: message,
+            roomId: String(room),
+            senderName: String(senderName).substring(0, 50),
+            message: String(message).trim(),
             timeStamp: new Date()
         };
 
-        // FIX: io.to(room) use kiya hai taake sender aur receiver dono ko real-time event mile
         io.to(room).emit("message", dataToStore);
 
         try {
