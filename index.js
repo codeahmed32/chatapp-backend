@@ -12,10 +12,15 @@ import Room from "./models/messages.js";
 dotenv.config();
 const app = express();
 
-const ALLOWED_ORIGIN = "https://chat-app-front-end-react-js.vercel.app";
+const ALLOWED_ORIGIN = process.env.FRONTEND_URL || "https://chat-app-front-end-react-js.vercel.app";
 
 app.use(cors({ 
-    origin: ALLOWED_ORIGIN,
+    origin: (origin, callback) => {
+        if (!origin || origin.includes("vercel.app") || origin.includes("localhost")) {
+            return callback(null, true);
+        }
+        return callback(null, true);
+    },
     methods: ["GET", "POST"],
     credentials: true
 }));
@@ -25,7 +30,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
     cors: {
-        origin: ALLOWED_ORIGIN,
+        origin: true,
         methods: ["GET", "POST"],
         credentials: true,
     },
@@ -33,6 +38,13 @@ const io = new Server(server, {
 });
 
 const rooms = {};
+
+// Clean up empty room state
+const cleanupRoom = (roomId) => {
+    if (rooms[roomId] && rooms[roomId].length === 0) {
+        delete rooms[roomId];
+    }
+};
 
 io.on("connection", (socket) => {
     console.log(`User Connected: ${socket.id}`);
@@ -66,7 +78,6 @@ io.on("connection", (socket) => {
             const roomData = await Room.findOne({ roomId: cleanRoomId });
             const history = roomData ? roomData.messages : [];
             socket.emit("chat_history", history); 
-            console.log(`Historic logs transmitted for room: ${cleanRoomId}`);
         } catch (err) {
             console.error("Error fetching chat history from MongoDB:", err);
         }
@@ -79,6 +90,7 @@ io.on("connection", (socket) => {
         if (rooms[cleanRoomId]) {
             rooms[cleanRoomId] = rooms[cleanRoomId].filter(user => user.id !== socket.id);
             io.to(cleanRoomId).emit("room_users", rooms[cleanRoomId]);
+            cleanupRoom(cleanRoomId);
         }
     });
 
@@ -99,24 +111,28 @@ io.on("connection", (socket) => {
             return socket.emit("error_message", "Message limits exceeded.");
         }
 
-        const listKey = "chat_messages";
+        // Generate valid ObjectId for sync across frontend/backend
+        const messageId = new mongoose.Types.ObjectId();
+
         const dataToStore = {
+            _id: messageId,
             roomId: String(room).trim(),
             senderName: String(senderName).substring(0, 50).trim(),
             message: cleanMessage,
             timeStamp: new Date().toISOString()
         };
 
+        // Broadcast to client with generated message ID
         io.to(dataToStore.roomId).emit("message", dataToStore);
 
         try {
-            await redisClient.lPush(listKey, JSON.stringify(dataToStore));
-            console.log("Volatile message cache write success.");
+            if (redisClient?.isOpen) {
+                await redisClient.lPush("chat_messages", JSON.stringify(dataToStore));
+            }
         } catch (err) {
-            console.error("Failed to push message to Redis:", err);
+            console.error("Redis Cache Push Failed (Non-blocking):", err.message);
         }
     });
-
 
     socket.on("edit_message", async ({ room, messageId, newMessage }) => {
         if (!room || !messageId || !newMessage || String(newMessage).trim() === "") return;
@@ -139,7 +155,6 @@ io.on("connection", (socket) => {
         }
     });
 
-
     socket.on("delete_message", async ({ room, messageId }) => {
         if (!room || !messageId) return;
 
@@ -160,11 +175,11 @@ io.on("connection", (socket) => {
     });
 
     socket.on("disconnect", () => {
-        console.log(`User Disconnected: ${socket.id}`);
         const { roomId } = socket;
         if (roomId && rooms[roomId]) {
             rooms[roomId] = rooms[roomId].filter(user => user.id !== socket.id);
             io.to(roomId).emit("room_users", rooms[roomId]);
+            cleanupRoom(roomId);
         }
     });
 });
@@ -172,15 +187,20 @@ io.on("connection", (socket) => {
 const startServer = async () => {
     try {
         await ConnectDb();
-        await connectRedis();
+        try {
+            await connectRedis();
+        } catch (redisErr) {
+            console.error("Redis connection failed, continuing without volatile cache:", redisErr.message);
+        }
+        
         initCronJobs();
 
         const PORT = process.env.PORT || 5050;
         server.listen(PORT, "0.0.0.0", () => {
-            console.log(`Chat server seamlessly running at port ${PORT}`);
+            console.log(`Chat server running at port ${PORT}`);
         });
     } catch (err) {
-        console.error("Fatal startup error, connection aborted:", err);
+        console.error("Fatal startup error:", err);
         process.exit(1);
     }
 };
