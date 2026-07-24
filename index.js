@@ -11,16 +11,19 @@ import Room from "./models/messages.js";
 
 
 
+
+
+
+dotenv.config();
+const app = express();
+
+
 app.get("/", (req, res) => {
     res.status(200).json({
         ok: true,
         message: "Chat App Real-Time Backend Service is Running..."
     });
 });
-
-
-dotenv.config();
-const app = express();
 
 const ALLOWED_ORIGIN = process.env.FRONTEND_URL || "https://chat-app-front-end-react-js.vercel.app";
 
