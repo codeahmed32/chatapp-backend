@@ -9,6 +9,16 @@ import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
 import Room from "./models/messages.js"; 
 
+
+
+app.get("/", (req, res) => {
+    res.status(200).json({
+        ok: true,
+        message: "Chat App Real-Time Backend Service is Running..."
+    });
+});
+
+
 dotenv.config();
 const app = express();
 
