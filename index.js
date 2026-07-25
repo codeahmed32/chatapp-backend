@@ -9,14 +9,8 @@ import redisClient, { connectRedis } from "./Utils/redis.js";
 import { initCronJobs } from "./Utils/cronJob.js";
 import Room from "./models/messages.js"; 
 
-
-
-
-
-
 dotenv.config();
 const app = express();
-
 
 app.get("/", (req, res) => {
     res.status(200).json({
@@ -52,7 +46,6 @@ const io = new Server(server, {
 
 const rooms = {};
 
-// Clean up empty room state
 const cleanupRoom = (roomId) => {
     if (rooms[roomId] && rooms[roomId].length === 0) {
         delete rooms[roomId];
@@ -62,7 +55,8 @@ const cleanupRoom = (roomId) => {
 io.on("connection", (socket) => {
     console.log(`User Connected: ${socket.id}`);
 
-    socket.on("join", async ({ roomId, userName }) => {
+    // FIXED: Changed event from "join" to "join_room" to match frontend emitter
+    socket.on("join_room", async ({ roomId, userName }) => {
         if (!roomId || !userName) return;
 
         const cleanRoomId = String(roomId).trim();
@@ -88,7 +82,7 @@ io.on("connection", (socket) => {
         io.to(cleanRoomId).emit("room_users", rooms[cleanRoomId]);
 
         try {
-            const roomData = await Room.findOne({ roomId: cleanRoomId });
+            let roomData = await Room.findOne({ roomId: cleanRoomId });
             const history = roomData ? roomData.messages : [];
             socket.emit("chat_history", history); 
         } catch (err) {
@@ -108,9 +102,10 @@ io.on("connection", (socket) => {
     });
 
     socket.on("send", async (messagePayload) => {
-        const { room, senderName, message } = messagePayload;
+        const { room, roomId, senderName, message, tempId } = messagePayload;
+        const targetRoom = room || roomId;
         
-        if (!room || !senderName || !message || String(message).trim() === "") {
+        if (!targetRoom || !senderName || !message || String(message).trim() === "") {
             return; 
         }
 
@@ -124,26 +119,33 @@ io.on("connection", (socket) => {
             return socket.emit("error_message", "Message limits exceeded.");
         }
 
-        // Generate valid ObjectId for sync across frontend/backend
         const messageId = new mongoose.Types.ObjectId();
 
         const dataToStore = {
             _id: messageId,
-            roomId: String(room).trim(),
+            roomId: String(targetRoom).trim(),
             senderName: String(senderName).substring(0, 50).trim(),
             message: cleanMessage,
-            timeStamp: new Date().toISOString()
+            timeStamp: new Date().toISOString(),
+            isEdited: false
         };
 
-        // Broadcast to client with generated message ID
+        // Broadcast to all clients in room
         io.to(dataToStore.roomId).emit("message", dataToStore);
 
         try {
+            // FIXED: Added MongoDB persistence logic so messages are saved permanently
+            await Room.findOneAndUpdate(
+                { roomId: dataToStore.roomId },
+                { $push: { messages: dataToStore } },
+                { upsert: true, new: true }
+            );
+
             if (redisClient?.isOpen) {
                 await redisClient.lPush("chat_messages", JSON.stringify(dataToStore));
             }
         } catch (err) {
-            console.error("Redis Cache Push Failed (Non-blocking):", err.message);
+            console.error("Failed to save message to Database/Cache:", err);
         }
     });
 
